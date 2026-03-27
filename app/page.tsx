@@ -169,11 +169,12 @@ export default function ErgonomicsPro() {
 
       // 3. ข้อมือเบี้ยวซ้ายขวา (คำนวณในระนาบ XZ เท่านั้น)
       const leftWristAngle =
-        leftElbow.visibility > 0.5 && leftIndex.visibility > 0.5
+        (leftElbow?.visibility || 0) > 0.5 && (leftIndex?.visibility || 0) > 0.5
           ? calculateAngleXZ(leftElbow, leftWrist, leftIndex)
           : 180;
       const rightWristAngle =
-        rightElbow.visibility > 0.5 && rightIndex.visibility > 0.5
+        (rightElbow?.visibility || 0) > 0.5 &&
+        (rightIndex?.visibility || 0) > 0.5
           ? calculateAngleXZ(rightElbow, rightWrist, rightIndex)
           : 180;
 
