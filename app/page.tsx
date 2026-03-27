@@ -11,6 +11,7 @@ import {
   ZoomIn,
   ZoomOut,
   Settings,
+  BarChart2, // ✅ นำเข้าไอคอนสำหรับปุ่มเปิด/ปิด Analytics
 } from "lucide-react";
 
 import type { Results, Landmark } from "@mediapipe/pose";
@@ -31,12 +32,11 @@ const drawLandmarks =
   mpDrawing.drawLandmarks ||
   (typeof window !== "undefined" ? (window as any).drawLandmarks : undefined);
 
-// ✅ เกณฑ์การตัดสิน (ปรับจูนความเซนซิทีฟได้ที่นี่)
 const CONFIG = {
-  MAX_NECK_LEAN_ANGLE: 25, // คอยื่นไปข้างหน้าเกิน 25 องศา
-  MIN_HEAD_DROP_RATIO: 0.45, // [ใหม่] อัตราส่วนจมูก-ไหล่ ถ้าน้อยกว่า 0.45 คือก้มหน้ามองจอ
-  MIN_WRIST_ANGLE: 155, // [ใหม่] ข้อมือเบี้ยวซ้าย/ขวาเกิน 25 องศา (180 - 25 = 155)
-  TIME_LIMIT_SECONDS: 5, // ต้องผิดท่าต่อเนื่อง 5 วินาที
+  MAX_NECK_LEAN_ANGLE: 25,
+  MIN_HEAD_DROP_RATIO: 0.45,
+  MIN_WRIST_ANGLE: 155,
+  TIME_LIMIT_SECONDS: 5,
 };
 
 type PostureLevel = "good" | "warning" | "bad" | "none";
@@ -45,14 +45,16 @@ export default function ErgonomicsPro() {
   const webcamRef = useRef<Webcam>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const poseRef = useRef<any>(null);
-  const requestRef = useRef<number | null>(null);
+  const requestRef = useRef<number | null>(null); // ✅ แก้ TypeScript Vercel
 
   const [isTracking, setIsTracking] = useState(false);
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [level, setLevel] = useState<PostureLevel>("none");
   const [duration, setDuration] = useState(0);
 
-  // ✅ เพิ่มค่า Debug ข้อมือ และ ก้มหน้า
+  // ✅ State ควบคุมการโชว์/ซ่อน กล่อง Analytics
+  const [showAnalytics, setShowAnalytics] = useState(false); // ค่าเริ่มต้นคือปิดไว้ จะได้ไม่บังจอเล็ก
+
   const [debugInfo, setDebugInfo] = useState({
     poseType: "กำลังวิเคราะห์...",
     neckLean: 0,
@@ -100,7 +102,6 @@ export default function ErgonomicsPro() {
     return Math.acos(cosRatio) * (180.0 / Math.PI);
   };
 
-  // ✅ สูตรใหม่: คำนวณองศาเฉพาะแกน X (ซ้าย/ขวา) และ Z (ความลึก) ตัดแกน Y ทิ้ง (ไม่สนใจการงอขึ้น/ลง)
   const calculateAngleXZ = (a: any, b: any, c: any) => {
     const v1 = { x: a.x - b.x, z: (a.z || 0) - (b.z || 0) };
     const v2 = { x: c.x - b.x, z: (c.z || 0) - (b.z || 0) };
@@ -127,7 +128,7 @@ export default function ErgonomicsPro() {
     if (results.poseLandmarks && isTrackingRef.current) {
       const landmarks = results.poseLandmarks;
 
-      const nose = landmarks[0]; // จมูก
+      const nose = landmarks[0];
       const leftEar = landmarks[7];
       const rightEar = landmarks[8];
       const leftShoulder = landmarks[11];
@@ -136,7 +137,6 @@ export default function ErgonomicsPro() {
       const rightKnee = landmarks[26];
       const rightAnkle = landmarks[28];
 
-      // จุดวัดข้อมือซ้าย-ขวา
       const leftElbow = landmarks[13];
       const leftWrist = landmarks[15];
       const leftIndex = landmarks[19];
@@ -153,7 +153,6 @@ export default function ErgonomicsPro() {
         y: (leftShoulder.y + rightShoulder.y) / 2,
       };
 
-      // 1. คอยื่น
       const absoluteVertical = { x: midShoulder.x, y: midShoulder.y - 1 };
       const neckLeanAngle = calculateAngle2D(
         absoluteVertical,
@@ -161,13 +160,12 @@ export default function ErgonomicsPro() {
         midEar,
       );
 
-      // 2. ก้มหน้า (ระยะจมูกถึงไหล่ เทียบกับความกว้างไหล่)
       const shoulderWidth = Math.abs(leftShoulder.x - rightShoulder.x);
-      const headDropDist = midShoulder.y - nose.y; // ระยะจากไหล่ขึ้นไปหาจมูก
+      const headDropDist = midShoulder.y - nose.y;
       const headDropRatio =
         shoulderWidth > 0.05 ? headDropDist / shoulderWidth : 1.0;
 
-      // 3. ข้อมือเบี้ยวซ้ายขวา (คำนวณในระนาบ XZ เท่านั้น)
+      // ✅ แก้ไขปัญหา Vercel Type error สำหรับ visibility
       const leftWristAngle =
         (leftElbow?.visibility || 0) > 0.5 && (leftIndex?.visibility || 0) > 0.5
           ? calculateAngleXZ(leftElbow, leftWrist, leftIndex)
@@ -201,14 +199,13 @@ export default function ErgonomicsPro() {
       setDebugInfo({
         poseType: currentPoseType,
         neckLean: Math.round(neckLeanAngle),
-        headDrop: Math.round(headDropRatio * 100) / 100, // ปัดทศนิยม 2 ตำแหน่ง
+        headDrop: Math.round(headDropRatio * 100) / 100,
         wristAngle: Math.round(worstWristAngle),
       });
 
       let currentLevel: PostureLevel = "good";
       let drawColor = "#22c55e";
 
-      // ✅ เกณฑ์ตัดสินใจว่าทำท่าผิดอยู่หรือไม่
       const isTurtleNeck = neckLeanAngle > CONFIG.MAX_NECK_LEAN_ANGLE;
       const isLookingDown = headDropRatio < CONFIG.MIN_HEAD_DROP_RATIO;
       const isWristBent = worstWristAngle < CONFIG.MIN_WRIST_ANGLE;
@@ -229,7 +226,6 @@ export default function ErgonomicsPro() {
           drawColor = "#f97316";
         }
       } else {
-        // ให้พื้นที่บัฟเฟอร์เวลายืดตัวกลับ
         if (!isTurtleNeck && !isLookingDown && !isWristBent) {
           badPostureStartTimeRef.current = null;
         } else if (badPostureStartTimeRef.current !== null) {
@@ -246,6 +242,7 @@ export default function ErgonomicsPro() {
 
       setLevel(currentLevel);
 
+      // ✅ แก้ปัญหา TypeScript type error สำหรับ [start, end]
       const connectionsToDraw = shouldDrawFullBody
         ? POSE_CONNECTIONS
         : POSE_CONNECTIONS.filter(
@@ -266,7 +263,6 @@ export default function ErgonomicsPro() {
         },
       );
 
-      // วาดเส้นเล็งเพื่อตรวจจับคอยื่น/ก้มหน้า
       if (midEar && midShoulder) {
         ctx.beginPath();
         ctx.moveTo(midShoulder.x * canvas.width, midShoulder.y * canvas.height);
@@ -374,6 +370,7 @@ export default function ErgonomicsPro() {
     setZoom(newZoom);
   };
 
+  // ✅ อัปเกรดระบบถ่ายรูปให้รองรับมือถือ (ใช้ Share API / Blob)
   const captureImage = () => {
     if (!webcamRef.current?.video || !canvasRef.current) return;
     const captureCanvas = document.createElement("canvas");
@@ -403,10 +400,42 @@ export default function ErgonomicsPro() {
           captureCanvas.height,
         );
 
-      const link = document.createElement("a");
-      link.href = captureCanvas.toDataURL("image/jpeg", 0.9);
-      link.download = `ergonomics-${new Date().getTime()}.jpg`;
-      link.click();
+      // แปลง Canvas เป็นไฟล์ (Blob) เพื่อให้มือถือรองรับได้ดีกว่า
+      captureCanvas.toBlob(
+        async (blob) => {
+          if (!blob) return;
+
+          // 1. ถ้าเล่นบนมือถือ (iOS/Android) ให้ใช้เมนู "แชร์" ดั้งเดิมของเครื่อง
+          if (navigator.share && navigator.canShare) {
+            const file = new File([blob], `ergonomics-${Date.now()}.jpg`, {
+              type: "image/jpeg",
+            });
+            if (navigator.canShare({ files: [file] })) {
+              try {
+                await navigator.share({
+                  files: [file],
+                  title: "Posture Snapshot",
+                });
+                return; // ทำงานสำเร็จ จบการทำงาน
+              } catch (err) {
+                console.log("ผู้ใช้กดยกเลิกการแชร์ หรือ Share API มีปัญหา");
+              }
+            }
+          }
+
+          // 2. ถ้าเล่นบน PC หรือ Share API พัง ให้ใช้การดาวน์โหลดลิงก์แบบเดิม
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `ergonomics-${Date.now()}.jpg`;
+          document.body.appendChild(link); // ต้องเพิ่มลง body ก่อน มือถือบางรุ่นถึงจะยอมให้คลิก
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+        },
+        "image/jpeg",
+        0.9,
+      );
     }
   };
 
@@ -468,12 +497,25 @@ export default function ErgonomicsPro() {
                 PostureGuard Pro
               </span>
             </div>
-            <button
-              onClick={() => setShowSettings(!showSettings)}
-              className="p-2 rounded-full bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 transition-colors"
-            >
-              <Settings className="h-5 w-5" />
-            </button>
+
+            {/* ✅ แผงปุ่มมุมขวาบน */}
+            <div className="flex items-center gap-2">
+              {/* ปุ่มสลับโชว์/ซ่อน Live Analytics */}
+              <button
+                onClick={() => setShowAnalytics(!showAnalytics)}
+                className={`p-2 rounded-full backdrop-blur-sm transition-colors ${showAnalytics ? "bg-indigo-500 text-white" : "bg-white/10 text-white hover:bg-white/20"}`}
+                title="Toggle Analytics"
+              >
+                <BarChart2 className="h-5 w-5" />
+              </button>
+
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className="p-2 rounded-full bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 transition-colors"
+              >
+                <Settings className="h-5 w-5" />
+              </button>
+            </div>
           </div>
 
           {showSettings && (
@@ -500,9 +542,9 @@ export default function ErgonomicsPro() {
           )}
         </div>
 
-        {/* ✅ จอ Debug Stats แบบจัดเต็ม */}
-        {/* {isTracking && (
-          <div className="absolute top-28 left-6 flex flex-col gap-1.5 rounded-xl bg-black/60 border border-white/10 px-4 py-3 backdrop-blur-md z-20 shadow-xl pointer-events-none w-52">
+        {/* ✅ จอ Debug Stats ซ่อน/โชว์ ได้ตาม State showAnalytics */}
+        {isTracking && showAnalytics && (
+          <div className="absolute top-28 left-6 flex flex-col gap-1.5 rounded-xl bg-black/60 border border-white/10 px-4 py-3 backdrop-blur-md z-20 shadow-xl pointer-events-none w-52 animate-in fade-in slide-in-from-left-4">
             <span className="text-[10px] text-gray-400 font-mono uppercase tracking-widest border-b border-gray-600 pb-1 mb-1">
               Live Analytics
             </span>
@@ -545,7 +587,7 @@ export default function ErgonomicsPro() {
               </span>
             </div>
           </div>
-        )} */}
+        )}
 
         {isTracking && (
           <div className="absolute top-28 left-1/2 -translate-x-1/2 flex items-center gap-4 rounded-full bg-black/60 border border-white/10 px-5 py-2.5 backdrop-blur-md z-20 shadow-2xl animate-in fade-in zoom-in duration-300">
