@@ -248,7 +248,9 @@ export default function ErgonomicsPro() {
 
       const connectionsToDraw = shouldDrawFullBody
         ? POSE_CONNECTIONS
-        : POSE_CONNECTIONS.filter(([start, end]) => start < 23 && end < 23);
+        : POSE_CONNECTIONS.filter(
+            ([start, end]: [number, number]) => start < 23 && end < 23,
+          );
 
       drawConnectors(ctx, landmarks, connectionsToDraw, {
         color: drawColor,
