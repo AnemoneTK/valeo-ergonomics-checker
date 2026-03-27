@@ -501,7 +501,7 @@ export default function ErgonomicsPro() {
         </div>
 
         {/* ✅ จอ Debug Stats แบบจัดเต็ม */}
-        {isTracking && (
+        {/* {isTracking && (
           <div className="absolute top-28 left-6 flex flex-col gap-1.5 rounded-xl bg-black/60 border border-white/10 px-4 py-3 backdrop-blur-md z-20 shadow-xl pointer-events-none w-52">
             <span className="text-[10px] text-gray-400 font-mono uppercase tracking-widest border-b border-gray-600 pb-1 mb-1">
               Live Analytics
@@ -545,7 +545,7 @@ export default function ErgonomicsPro() {
               </span>
             </div>
           </div>
-        )}
+        )} */}
 
         {isTracking && (
           <div className="absolute top-28 left-1/2 -translate-x-1/2 flex items-center gap-4 rounded-full bg-black/60 border border-white/10 px-5 py-2.5 backdrop-blur-md z-20 shadow-2xl animate-in fade-in zoom-in duration-300">
