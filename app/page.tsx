@@ -148,11 +148,12 @@ export default function ErgonomicsPro() {
         ) => {
           const start = landmarks[startIdx];
           const end = landmarks[endIdx];
+          // ✅ แก้บัค Vercel: ดักจับกรณี visibility เป็น undefined
           if (
             !start ||
             !end ||
-            start.visibility < minVisibility ||
-            end.visibility < minVisibility
+            (start.visibility || 0) < minVisibility ||
+            (end.visibility || 0) < minVisibility
           )
             return;
 
@@ -171,7 +172,6 @@ export default function ErgonomicsPro() {
           ctx.stroke();
         };
 
-        // 🌟 ฟังก์ชันหาค่ากลางอัจฉริยะตอนถ่ายภาพ
         const getWeightedMidpoint = (idx1: number, idx2: number) => {
           const p1 = landmarks[idx1];
           const p2 = landmarks[idx2];
@@ -321,11 +321,12 @@ export default function ErgonomicsPro() {
       ) => {
         const start = landmarks[startIdx];
         const end = landmarks[endIdx];
+        // ✅ แก้บัค Vercel: ดักจับกรณี visibility เป็น undefined
         if (
           !start ||
           !end ||
-          start.visibility < minVisibility ||
-          end.visibility < minVisibility
+          (start.visibility || 0) < minVisibility ||
+          (end.visibility || 0) < minVisibility
         )
           return;
 
@@ -337,7 +338,6 @@ export default function ErgonomicsPro() {
         ctx.stroke();
       };
 
-      // 🌟 ฟังก์ชันหาค่ากลางอัจฉริยะตอนดูสด
       const getWeightedMidpoint = (idx1: number, idx2: number) => {
         const p1 = landmarks[idx1];
         const p2 = landmarks[idx2];
