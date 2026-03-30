@@ -85,7 +85,6 @@ export function usePostureTracker() {
     shoulderHunch: 100,
     landmarks: [] as Landmark[],
   });
-
   const [autoCalibrateEvent, setAutoCalibrateEvent] = useState(0);
   const [calibrateRejectEvent, setCalibrateRejectEvent] = useState(0);
 
@@ -137,18 +136,19 @@ export function usePostureTracker() {
         const rightElbow = landmarks[MP_POSE.RIGHT_ELBOW];
         const rightWrist = landmarks[MP_POSE.RIGHT_WRIST];
 
-        // 🌟 แก้ปัญหาจุดคอไถลไปโหนกแก้มด้วยสมการ Visibility-Weighted Average
-        const lVis = leftEar.visibility || 0.01;
-        const rVis = rightEar.visibility || 0.01;
-        const midEar = {
-          x: (leftEar.x * lVis + rightEar.x * rVis) / (lVis + rVis),
-          y: (leftEar.y * lVis + rightEar.y * rVis) / (lVis + rVis),
+        // 🌟 ฟังก์ชันหาค่ากลางแบบฉลาด (ยิ่งชัด ยิ่งดึงมาหาตัว)
+        const getWeightedMidpoint = (p1: Landmark, p2: Landmark) => {
+          const v1 = p1.visibility || 0.01;
+          const v2 = p2.visibility || 0.01;
+          return {
+            x: (p1.x * v1 + p2.x * v2) / (v1 + v2),
+            y: (p1.y * v1 + p2.y * v2) / (v1 + v2),
+          };
         };
 
-        const midShoulder = {
-          x: (leftShoulder.x + rightShoulder.x) / 2,
-          y: (leftShoulder.y + rightShoulder.y) / 2,
-        };
+        // 🌟 ใช้สมการใหม่ทั้งหมด! ทำให้เส้นแกนตัวเกาะสมจริง 100% แม้จะหันตัว
+        const midEar = getWeightedMidpoint(leftEar, rightEar);
+        const midShoulder = getWeightedMidpoint(leftShoulder, rightShoulder);
 
         const absoluteVertical = { x: midShoulder.x, y: midShoulder.y - 1 };
         const currentNeckLean = calculateAngle2D(

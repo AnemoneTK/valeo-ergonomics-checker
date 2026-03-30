@@ -171,42 +171,24 @@ export default function ErgonomicsPro() {
           ctx.stroke();
         };
 
-        // 🌟 แก้ปัญหาจุดคอไถลไปโหนกแก้มด้วยสมการ Visibility-Weighted Average
-        const lVis = landmarks[MP_POSE.LEFT_EAR].visibility || 0.01;
-        const rVis = landmarks[MP_POSE.RIGHT_EAR].visibility || 0.01;
-        const midEar = {
-          x:
-            (landmarks[MP_POSE.LEFT_EAR].x * lVis +
-              landmarks[MP_POSE.RIGHT_EAR].x * rVis) /
-            (lVis + rVis),
-          y:
-            (landmarks[MP_POSE.LEFT_EAR].y * lVis +
-              landmarks[MP_POSE.RIGHT_EAR].y * rVis) /
-            (lVis + rVis),
+        // 🌟 ฟังก์ชันหาค่ากลางอัจฉริยะตอนถ่ายภาพ
+        const getWeightedMidpoint = (idx1: number, idx2: number) => {
+          const p1 = landmarks[idx1];
+          const p2 = landmarks[idx2];
+          const v1 = p1.visibility || 0.01;
+          const v2 = p2.visibility || 0.01;
+          return {
+            x: (p1.x * v1 + p2.x * v2) / (v1 + v2),
+            y: (p1.y * v1 + p2.y * v2) / (v1 + v2),
+          };
         };
 
-        const midShoulder = {
-          x:
-            (landmarks[MP_POSE.LEFT_SHOULDER].x +
-              landmarks[MP_POSE.RIGHT_SHOULDER].x) /
-            2,
-          y:
-            (landmarks[MP_POSE.LEFT_SHOULDER].y +
-              landmarks[MP_POSE.RIGHT_SHOULDER].y) /
-            2,
-        };
-        const midHip = {
-          x:
-            (landmarks[MP_POSE.LEFT_HIP].x + landmarks[MP_POSE.RIGHT_HIP].x) /
-            2,
-          y:
-            (landmarks[MP_POSE.LEFT_HIP].y + landmarks[MP_POSE.RIGHT_HIP].y) /
-            2,
-        };
-
-        let cEar = midEar;
-        let cMidShoulder = midShoulder;
-        let cMidHip = midHip;
+        let cEar = getWeightedMidpoint(MP_POSE.LEFT_EAR, MP_POSE.RIGHT_EAR);
+        let cMidShoulder = getWeightedMidpoint(
+          MP_POSE.LEFT_SHOULDER,
+          MP_POSE.RIGHT_SHOULDER,
+        );
+        let cMidHip = getWeightedMidpoint(MP_POSE.LEFT_HIP, MP_POSE.RIGHT_HIP);
 
         if (facingMode === "user") {
           cEar = { x: 1 - cEar.x, y: cEar.y };
@@ -355,28 +337,30 @@ export default function ErgonomicsPro() {
         ctx.stroke();
       };
 
-      // 🌟 แก้ปัญหาจุดคอไถลไปโหนกแก้มด้วยสมการ Visibility-Weighted Average
-      const lVis = landmarks[MP_POSE.LEFT_EAR].visibility || 0.01;
-      const rVis = landmarks[MP_POSE.RIGHT_EAR].visibility || 0.01;
-      const midEarLive = {
-        x:
-          (landmarks[MP_POSE.LEFT_EAR].x * lVis +
-            landmarks[MP_POSE.RIGHT_EAR].x * rVis) /
-          (lVis + rVis),
-        y:
-          (landmarks[MP_POSE.LEFT_EAR].y * lVis +
-            landmarks[MP_POSE.RIGHT_EAR].y * rVis) /
-          (lVis + rVis),
+      // 🌟 ฟังก์ชันหาค่ากลางอัจฉริยะตอนดูสด
+      const getWeightedMidpoint = (idx1: number, idx2: number) => {
+        const p1 = landmarks[idx1];
+        const p2 = landmarks[idx2];
+        const v1 = p1.visibility || 0.01;
+        const v2 = p2.visibility || 0.01;
+        return {
+          x: (p1.x * v1 + p2.x * v2) / (v1 + v2),
+          y: (p1.y * v1 + p2.y * v2) / (v1 + v2),
+        };
       };
 
-      const midShoulderLive = {
-        x: (landmarks[11].x + landmarks[12].x) / 2,
-        y: (landmarks[11].y + landmarks[12].y) / 2,
-      };
-      const midHipLive = {
-        x: (landmarks[23].x + landmarks[24].x) / 2,
-        y: (landmarks[23].y + landmarks[24].y) / 2,
-      };
+      const midEarLive = getWeightedMidpoint(
+        MP_POSE.LEFT_EAR,
+        MP_POSE.RIGHT_EAR,
+      );
+      const midShoulderLive = getWeightedMidpoint(
+        MP_POSE.LEFT_SHOULDER,
+        MP_POSE.RIGHT_SHOULDER,
+      );
+      const midHipLive = getWeightedMidpoint(
+        MP_POSE.LEFT_HIP,
+        MP_POSE.RIGHT_HIP,
+      );
 
       ctx.beginPath();
       ctx.moveTo(midEarLive.x * width, midEarLive.y * height);
