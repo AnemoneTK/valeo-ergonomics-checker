@@ -1,387 +1,124 @@
 "use client";
 
-import React, { useRef, useEffect, useState, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Webcam from "react-webcam";
 import {
   Camera,
-  Play,
-  Square,
   Activity,
   FlipHorizontal,
   ZoomIn,
   ZoomOut,
   Settings,
-  BarChart2, // ✅ นำเข้าไอคอนสำหรับปุ่มเปิด/ปิด Analytics
+  BarChart2,
+  Scan,
 } from "lucide-react";
+import {
+  usePostureTracker,
+  PostureLevel,
+  SegmentColors,
+} from "../hooks/usePostureTracker";
 
-import type { Results, Landmark } from "@mediapipe/pose";
-const mpPose = require("@mediapipe/pose");
-const mpDrawing = require("@mediapipe/drawing_utils");
-const Pose =
-  mpPose.Pose ||
-  (typeof window !== "undefined" ? (window as any).Pose : undefined);
-const POSE_CONNECTIONS =
-  mpPose.POSE_CONNECTIONS ||
-  (typeof window !== "undefined"
-    ? (window as any).POSE_CONNECTIONS
-    : undefined);
-const drawConnectors =
-  mpDrawing.drawConnectors ||
-  (typeof window !== "undefined" ? (window as any).drawConnectors : undefined);
-const drawLandmarks =
-  mpDrawing.drawLandmarks ||
-  (typeof window !== "undefined" ? (window as any).drawLandmarks : undefined);
-
-const CONFIG = {
-  MAX_NECK_LEAN_ANGLE: 25,
-  MIN_HEAD_DROP_RATIO: 0.45,
-  MIN_WRIST_ANGLE: 155,
-  TIME_LIMIT_SECONDS: 5,
+const MP_POSE = {
+  NOSE: 0,
+  LEFT_EAR: 7,
+  RIGHT_EAR: 8,
+  LEFT_SHOULDER: 11,
+  RIGHT_SHOULDER: 12,
+  LEFT_ELBOW: 13,
+  RIGHT_ELBOW: 14,
+  LEFT_WRIST: 15,
+  RIGHT_WRIST: 16,
+  LEFT_PINKY: 17,
+  RIGHT_PINKY: 18,
+  LEFT_INDEX: 19,
+  RIGHT_INDEX: 20,
+  LEFT_HIP: 23,
+  RIGHT_HIP: 24,
+  LEFT_KNEE: 25,
+  RIGHT_KNEE: 26,
+  LEFT_ANKLE: 27,
+  RIGHT_ANKLE: 28,
 };
 
-type PostureLevel = "good" | "warning" | "bad" | "none";
+type ToastInfo = { msg: string; type: "success" | "info" | "warning" } | null;
 
 export default function ErgonomicsPro() {
-  const webcamRef = useRef<Webcam>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const poseRef = useRef<any>(null);
-  const requestRef = useRef<number | null>(null); // ✅ แก้ TypeScript Vercel
-
-  const [isTracking, setIsTracking] = useState(false);
-  const [isCameraReady, setIsCameraReady] = useState(false);
-  const [level, setLevel] = useState<PostureLevel>("none");
-  const [duration, setDuration] = useState(0);
-
-  // ✅ State ควบคุมการโชว์/ซ่อน กล่อง Analytics
-  const [showAnalytics, setShowAnalytics] = useState(false); // ค่าเริ่มต้นคือปิดไว้ จะได้ไม่บังจอเล็ก
-
-  const [debugInfo, setDebugInfo] = useState({
-    poseType: "กำลังวิเคราะห์...",
-    neckLean: 0,
-    headDrop: 0,
-    wristAngle: 180,
-  });
+  const {
+    webcamRef,
+    canvasRef,
+    isTracking,
+    setIsTracking,
+    setIsCameraReady,
+    level,
+    duration,
+    debugInfo,
+    calibrate,
+    isCalibrated,
+    segmentColors,
+    autoCalibrateEvent,
+    calibrateRejectEvent,
+  } = usePostureTracker();
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<string>("");
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
   const [zoom, setZoom] = useState(1);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
-  const isTrackingRef = useRef(isTracking);
-  const badPostureStartTimeRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    isTrackingRef.current = isTracking;
-  }, [isTracking]);
+  const [toast, setToast] = useState<ToastInfo>(null);
 
   useEffect(() => {
-    navigator.mediaDevices.enumerateDevices().then((mediaDevices) => {
-      const videoDevices = mediaDevices.filter(
-        ({ kind }) => kind === "videoinput",
-      );
-      setDevices(videoDevices);
-    });
-  }, []);
-
-  const calculateAngle2D = (a: any, b: any, c: any) => {
-    const radians =
-      Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-    let angle = Math.abs((radians * 180.0) / Math.PI);
-    return angle > 180.0 ? 360.0 - angle : angle;
-  };
-
-  const calculateAngle3D = (a: any, b: any, c: any) => {
-    const v1 = { x: a.x - b.x, y: a.y - b.y, z: (a.z || 0) - (b.z || 0) };
-    const v2 = { x: c.x - b.x, y: c.y - b.y, z: (c.z || 0) - (b.z || 0) };
-    const dotProduct = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
-    const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y + v1.z * v1.z);
-    const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y + v2.z * v2.z);
-    if (mag1 === 0 || mag2 === 0) return 180;
-    let cosRatio = Math.max(-1, Math.min(1, dotProduct / (mag1 * mag2)));
-    return Math.acos(cosRatio) * (180.0 / Math.PI);
-  };
-
-  const calculateAngleXZ = (a: any, b: any, c: any) => {
-    const v1 = { x: a.x - b.x, z: (a.z || 0) - (b.z || 0) };
-    const v2 = { x: c.x - b.x, z: (c.z || 0) - (b.z || 0) };
-    const dotProduct = v1.x * v2.x + v1.z * v2.z;
-    const mag1 = Math.sqrt(v1.x * v1.x + v1.z * v1.z);
-    const mag2 = Math.sqrt(v2.x * v2.x + v2.z * v2.z);
-    if (mag1 === 0 || mag2 === 0) return 180;
-    let cosRatio = Math.max(-1, Math.min(1, dotProduct / (mag1 * mag2)));
-    return Math.acos(cosRatio) * (180.0 / Math.PI);
-  };
-
-  const onResults = useCallback((results: Results) => {
-    if (!canvasRef.current || !webcamRef.current?.video) return;
-    const video = webcamRef.current.video;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.save();
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    if (results.poseLandmarks && isTrackingRef.current) {
-      const landmarks = results.poseLandmarks;
-
-      const nose = landmarks[0];
-      const leftEar = landmarks[7];
-      const rightEar = landmarks[8];
-      const leftShoulder = landmarks[11];
-      const rightShoulder = landmarks[12];
-      const rightHip = landmarks[24];
-      const rightKnee = landmarks[26];
-      const rightAnkle = landmarks[28];
-
-      const leftElbow = landmarks[13];
-      const leftWrist = landmarks[15];
-      const leftIndex = landmarks[19];
-      const rightElbow = landmarks[14];
-      const rightWrist = landmarks[16];
-      const rightIndex = landmarks[20];
-
-      const midEar = {
-        x: (leftEar.x + rightEar.x) / 2,
-        y: (leftEar.y + rightEar.y) / 2,
-      };
-      const midShoulder = {
-        x: (leftShoulder.x + rightShoulder.x) / 2,
-        y: (leftShoulder.y + rightShoulder.y) / 2,
-      };
-
-      const absoluteVertical = { x: midShoulder.x, y: midShoulder.y - 1 };
-      const neckLeanAngle = calculateAngle2D(
-        absoluteVertical,
-        midShoulder,
-        midEar,
-      );
-
-      const shoulderWidth = Math.abs(leftShoulder.x - rightShoulder.x);
-      const headDropDist = midShoulder.y - nose.y;
-      const headDropRatio =
-        shoulderWidth > 0.05 ? headDropDist / shoulderWidth : 1.0;
-
-      // ✅ แก้ไขปัญหา Vercel Type error สำหรับ visibility
-      const leftWristAngle =
-        (leftElbow?.visibility || 0) > 0.5 && (leftIndex?.visibility || 0) > 0.5
-          ? calculateAngleXZ(leftElbow, leftWrist, leftIndex)
-          : 180;
-      const rightWristAngle =
-        (rightElbow?.visibility || 0) > 0.5 &&
-        (rightIndex?.visibility || 0) > 0.5
-          ? calculateAngleXZ(rightElbow, rightWrist, rightIndex)
-          : 180;
-
-      const worstWristAngle = Math.min(leftWristAngle, rightWristAngle);
-
-      let currentPoseType = "นั่งโต๊ะ (Desk)";
-      let shouldDrawFullBody = false;
-      const isLegsVisible =
-        (rightKnee?.visibility || 0) > 0.6 &&
-        (rightAnkle?.visibility || 0) > 0.6;
-
-      if (isLegsVisible) {
-        shouldDrawFullBody = true;
-        const kneeAngle = calculateAngle3D(rightHip, rightKnee, rightAnkle);
-        const hipToAnkleDistY = rightAnkle.y - rightHip.y;
-
-        if (kneeAngle > 160) currentPoseType = "ยืน (Standing)";
-        else if (kneeAngle < 130) {
-          if (hipToAnkleDistY < 0.25) currentPoseType = "นั่งพื้น (Floor)";
-          else currentPoseType = "ย่อตัว (Squatting)";
-        } else currentPoseType = "นั่งเก้าอี้ (Chair)";
-      }
-
-      setDebugInfo({
-        poseType: currentPoseType,
-        neckLean: Math.round(neckLeanAngle),
-        headDrop: Math.round(headDropRatio * 100) / 100,
-        wristAngle: Math.round(worstWristAngle),
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      navigator.mediaDevices.enumerateDevices().then((mediaDevices) => {
+        setDevices(mediaDevices.filter(({ kind }) => kind === "videoinput"));
       });
-
-      let currentLevel: PostureLevel = "good";
-      let drawColor = "#22c55e";
-
-      const isTurtleNeck = neckLeanAngle > CONFIG.MAX_NECK_LEAN_ANGLE;
-      const isLookingDown = headDropRatio < CONFIG.MIN_HEAD_DROP_RATIO;
-      const isWristBent = worstWristAngle < CONFIG.MIN_WRIST_ANGLE;
-
-      const isBadPosture = isTurtleNeck || isLookingDown || isWristBent;
-
-      if (isBadPosture) {
-        if (badPostureStartTimeRef.current === null) {
-          badPostureStartTimeRef.current = Date.now();
-        }
-
-        const elapsed = (Date.now() - badPostureStartTimeRef.current) / 1000;
-        if (elapsed >= CONFIG.TIME_LIMIT_SECONDS) {
-          currentLevel = "bad";
-          drawColor = "#ef4444";
-        } else {
-          currentLevel = "warning";
-          drawColor = "#f97316";
-        }
-      } else {
-        if (!isTurtleNeck && !isLookingDown && !isWristBent) {
-          badPostureStartTimeRef.current = null;
-        } else if (badPostureStartTimeRef.current !== null) {
-          const elapsed = (Date.now() - badPostureStartTimeRef.current) / 1000;
-          if (elapsed >= CONFIG.TIME_LIMIT_SECONDS) {
-            currentLevel = "bad";
-            drawColor = "#ef4444";
-          } else {
-            currentLevel = "warning";
-            drawColor = "#f97316";
-          }
-        }
-      }
-
-      setLevel(currentLevel);
-
-      // ✅ แก้ปัญหา TypeScript type error สำหรับ [start, end]
-      const connectionsToDraw = shouldDrawFullBody
-        ? POSE_CONNECTIONS
-        : POSE_CONNECTIONS.filter(
-            ([start, end]: [number, number]) => start < 23 && end < 23,
-          );
-
-      drawConnectors(ctx, landmarks, connectionsToDraw, {
-        color: drawColor,
-        lineWidth: 4,
-      });
-      drawLandmarks(
-        ctx,
-        shouldDrawFullBody ? landmarks : landmarks.slice(0, 23),
-        {
-          color: drawColor,
-          lineWidth: 2,
-          radius: 3,
-        },
-      );
-
-      if (midEar && midShoulder) {
-        ctx.beginPath();
-        ctx.moveTo(midShoulder.x * canvas.width, midShoulder.y * canvas.height);
-        ctx.lineTo(midEar.x * canvas.width, midEar.y * canvas.height);
-        ctx.strokeStyle = drawColor;
-        ctx.lineWidth = 6;
-        ctx.stroke();
-      }
     } else {
-      setLevel("none");
-      badPostureStartTimeRef.current = null;
-      setDebugInfo({
-        poseType: "ไม่พบผู้ใช้",
-        neckLean: 0,
-        headDrop: 0,
-        wristAngle: 180,
-      });
+      console.warn("เบราว์เซอร์นี้ไม่รองรับ enumerateDevices");
     }
-    ctx.restore();
   }, []);
 
   useEffect(() => {
-    if (poseRef.current) return;
-    let isCancelled = false;
-
-    const pose = new Pose({
-      locateFile: (file: string) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
-    });
-
-    pose.setOptions({
-      modelComplexity: 2,
-      smoothLandmarks: true,
-      minDetectionConfidence: 0.6,
-      minTrackingConfidence: 0.6,
-    });
-
-    pose.onResults(onResults);
-
-    pose.initialize().then(() => {
-      if (!isCancelled) poseRef.current = pose;
-      else pose.close();
-    });
-
-    return () => {
-      isCancelled = true;
-      if (poseRef.current) {
-        poseRef.current.close();
-        poseRef.current = null;
-      }
-    };
-  }, [onResults]);
+    if (autoCalibrateEvent > 0) {
+      setToast({ msg: "🔄 ระบบปรับท่ามาตรฐานให้อัตโนมัติ!", type: "info" });
+      setTimeout(() => setToast(null), 3000);
+    }
+  }, [autoCalibrateEvent]);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    let isLoopRunning = true;
-
-    const processFrame = async () => {
-      if (!isLoopRunning) return;
-      const video = webcamRef.current?.video;
-
-      if (
-        video &&
-        video.readyState >= 2 &&
-        video.videoWidth > 0 &&
-        poseRef.current &&
-        isCameraReady
-      ) {
-        try {
-          await poseRef.current.send({ image: video });
-        } catch (error) {
-          console.warn("Skipping frame:", error);
-        }
-      }
-
-      if (isTrackingRef.current && isLoopRunning) {
-        requestRef.current = requestAnimationFrame(processFrame);
-      }
-    };
-
-    if (isTracking && isCameraReady) {
-      interval = setInterval(() => setDuration((prev) => prev + 1), 1000);
-      requestRef.current = requestAnimationFrame(processFrame);
-    } else {
-      setDuration(0);
-      setLevel("none");
-      badPostureStartTimeRef.current = null;
-      if (canvasRef.current) {
-        const ctx = canvasRef.current.getContext("2d");
-        ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-      }
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+    if (calibrateRejectEvent > 0) {
+      setToast({
+        msg: "⚠️ กรุณานั่งหลังตรง ระบบรอปรับท่าใหม่อยู่...",
+        type: "warning",
+      });
+      setTimeout(() => setToast(null), 3000);
     }
-
-    return () => {
-      isLoopRunning = false;
-      clearInterval(interval);
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-    };
-  }, [isTracking, isCameraReady]);
+  }, [calibrateRejectEvent]);
 
   const handleZoom = (direction: "in" | "out") => {
     let newZoom = direction === "in" ? zoom + 0.5 : zoom - 0.5;
-    newZoom = Math.max(1, Math.min(newZoom, 3));
-    setZoom(newZoom);
+    setZoom(Math.max(1, Math.min(newZoom, 3)));
   };
 
-  // ✅ อัปเกรดระบบถ่ายรูปให้รองรับมือถือ (ใช้ Share API / Blob)
+  const handleCalibrate = () => {
+    calibrate();
+    setToast({ msg: "✨ บันทึกท่ามาตรฐานเรียบร้อยแล้ว", type: "success" });
+    setTimeout(() => setToast(null), 3000);
+  };
+
   const captureImage = () => {
     if (!webcamRef.current?.video || !canvasRef.current) return;
     const captureCanvas = document.createElement("canvas");
     captureCanvas.width = webcamRef.current.video.videoWidth;
     captureCanvas.height = webcamRef.current.video.videoHeight;
     const ctx = captureCanvas.getContext("2d");
-
     if (ctx) {
+      ctx.save();
       ctx.translate(captureCanvas.width / 2, captureCanvas.height / 2);
       ctx.scale(zoom, zoom);
+
       if (facingMode === "user") ctx.scale(-1, 1);
+
       ctx.translate(-captureCanvas.width / 2, -captureCanvas.height / 2);
       ctx.drawImage(
         webcamRef.current.video,
@@ -390,22 +127,128 @@ export default function ErgonomicsPro() {
         captureCanvas.width,
         captureCanvas.height,
       );
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      if (isTracking)
-        ctx.drawImage(
-          canvasRef.current,
-          0,
-          0,
-          captureCanvas.width,
-          captureCanvas.height,
-        );
+      ctx.restore();
 
-      // แปลง Canvas เป็นไฟล์ (Blob) เพื่อให้มือถือรองรับได้ดีกว่า
+      if (
+        isTracking &&
+        debugInfo?.landmarks &&
+        debugInfo.landmarks.length > 0
+      ) {
+        const landmarks = debugInfo.landmarks;
+        const colors = segmentColors;
+        const width = captureCanvas.width;
+        const height = captureCanvas.height;
+
+        const drawLineOnCapture = (
+          startIdx: number,
+          endIdx: number,
+          color: string,
+          lineWidth = 4,
+          minVisibility = 0.5,
+        ) => {
+          const start = landmarks[startIdx];
+          const end = landmarks[endIdx];
+          if (
+            !start ||
+            !end ||
+            start.visibility < minVisibility ||
+            end.visibility < minVisibility
+          )
+            return;
+
+          let startX = start.x;
+          let endX = end.x;
+          if (facingMode === "user") {
+            startX = 1 - startX;
+            endX = 1 - endX;
+          }
+
+          ctx.beginPath();
+          ctx.moveTo(startX * width, start.y * height);
+          ctx.lineTo(endX * width, end.y * height);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = lineWidth;
+          ctx.stroke();
+        };
+
+        // 🌟 แก้ปัญหาจุดคอไถลไปโหนกแก้มด้วยสมการ Visibility-Weighted Average
+        const lVis = landmarks[MP_POSE.LEFT_EAR].visibility || 0.01;
+        const rVis = landmarks[MP_POSE.RIGHT_EAR].visibility || 0.01;
+        const midEar = {
+          x:
+            (landmarks[MP_POSE.LEFT_EAR].x * lVis +
+              landmarks[MP_POSE.RIGHT_EAR].x * rVis) /
+            (lVis + rVis),
+          y:
+            (landmarks[MP_POSE.LEFT_EAR].y * lVis +
+              landmarks[MP_POSE.RIGHT_EAR].y * rVis) /
+            (lVis + rVis),
+        };
+
+        const midShoulder = {
+          x:
+            (landmarks[MP_POSE.LEFT_SHOULDER].x +
+              landmarks[MP_POSE.RIGHT_SHOULDER].x) /
+            2,
+          y:
+            (landmarks[MP_POSE.LEFT_SHOULDER].y +
+              landmarks[MP_POSE.RIGHT_SHOULDER].y) /
+            2,
+        };
+        const midHip = {
+          x:
+            (landmarks[MP_POSE.LEFT_HIP].x + landmarks[MP_POSE.RIGHT_HIP].x) /
+            2,
+          y:
+            (landmarks[MP_POSE.LEFT_HIP].y + landmarks[MP_POSE.RIGHT_HIP].y) /
+            2,
+        };
+
+        let cEar = midEar;
+        let cMidShoulder = midShoulder;
+        let cMidHip = midHip;
+
+        if (facingMode === "user") {
+          cEar = { x: 1 - cEar.x, y: cEar.y };
+          cMidShoulder = { x: 1 - cMidShoulder.x, y: cMidShoulder.y };
+          cMidHip = { x: 1 - cMidHip.x, y: cMidHip.y };
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(cEar.x * width, cEar.y * height);
+        ctx.lineTo(cMidShoulder.x * width, cMidShoulder.y * height);
+        ctx.lineTo(cMidHip.x * width, cMidHip.y * height);
+        ctx.strokeStyle = colors.neck;
+        ctx.lineWidth = 6;
+        ctx.stroke();
+
+        drawLineOnCapture(11, 12, colors.shoulders, 4);
+
+        drawLineOnCapture(11, 23, colors.torso);
+        drawLineOnCapture(12, 24, colors.torso);
+        drawLineOnCapture(23, 24, colors.torso);
+
+        drawLineOnCapture(12, 14, colors.rightArm);
+        drawLineOnCapture(14, 16, colors.rightArm);
+        drawLineOnCapture(16, 20, colors.rightWrist, 6);
+        drawLineOnCapture(16, 18, colors.rightWrist, 4);
+        drawLineOnCapture(16, 22, colors.rightWrist, 4);
+
+        drawLineOnCapture(11, 13, colors.leftArm);
+        drawLineOnCapture(13, 15, colors.leftArm);
+        drawLineOnCapture(15, 19, colors.leftWrist, 6);
+        drawLineOnCapture(15, 17, colors.leftWrist, 4);
+        drawLineOnCapture(15, 21, colors.leftWrist, 4);
+
+        drawLineOnCapture(24, 26, colors.rightLeg, 4, 0.65);
+        drawLineOnCapture(26, 28, colors.rightLeg, 4, 0.65);
+        drawLineOnCapture(23, 25, colors.leftLeg, 4, 0.65);
+        drawLineOnCapture(25, 27, colors.leftLeg, 4, 0.65);
+      }
+
       captureCanvas.toBlob(
         async (blob) => {
           if (!blob) return;
-
-          // 1. ถ้าเล่นบนมือถือ (iOS/Android) ให้ใช้เมนู "แชร์" ดั้งเดิมของเครื่อง
           if (navigator.share && navigator.canShare) {
             const file = new File([blob], `ergonomics-${Date.now()}.jpg`, {
               type: "image/jpeg",
@@ -416,19 +259,15 @@ export default function ErgonomicsPro() {
                   files: [file],
                   title: "Posture Snapshot",
                 });
-                return; // ทำงานสำเร็จ จบการทำงาน
-              } catch (err) {
-                console.log("ผู้ใช้กดยกเลิกการแชร์ หรือ Share API มีปัญหา");
-              }
+                return;
+              } catch (err) {}
             }
           }
-
-          // 2. ถ้าเล่นบน PC หรือ Share API พัง ให้ใช้การดาวน์โหลดลิงก์แบบเดิม
           const url = URL.createObjectURL(blob);
           const link = document.createElement("a");
           link.href = url;
           link.download = `ergonomics-${Date.now()}.jpg`;
-          document.body.appendChild(link); // ต้องเพิ่มลง body ก่อน มือถือบางรุ่นถึงจะยอมให้คลิก
+          document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
           URL.revokeObjectURL(url);
@@ -461,8 +300,134 @@ export default function ErgonomicsPro() {
     },
   };
 
+  useEffect(() => {
+    if (
+      !canvasRef.current ||
+      !webcamRef.current?.video ||
+      !debugInfo?.landmarks
+    )
+      return;
+    const video = webcamRef.current.video;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      if (
+        canvas.width !== video.videoWidth ||
+        canvas.height !== video.videoHeight
+      ) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+      }
+    }
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (isTracking && debugInfo.landmarks.length > 0) {
+      const landmarks = debugInfo.landmarks;
+      const colors = segmentColors;
+      const width = canvas.width;
+      const height = canvas.height;
+
+      const drawLineOnLive = (
+        startIdx: number,
+        endIdx: number,
+        color: string,
+        lineWidth = 4,
+        minVisibility = 0.5,
+      ) => {
+        const start = landmarks[startIdx];
+        const end = landmarks[endIdx];
+        if (
+          !start ||
+          !end ||
+          start.visibility < minVisibility ||
+          end.visibility < minVisibility
+        )
+          return;
+
+        ctx.beginPath();
+        ctx.moveTo(start.x * width, start.y * height);
+        ctx.lineTo(end.x * width, end.y * height);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lineWidth;
+        ctx.stroke();
+      };
+
+      // 🌟 แก้ปัญหาจุดคอไถลไปโหนกแก้มด้วยสมการ Visibility-Weighted Average
+      const lVis = landmarks[MP_POSE.LEFT_EAR].visibility || 0.01;
+      const rVis = landmarks[MP_POSE.RIGHT_EAR].visibility || 0.01;
+      const midEarLive = {
+        x:
+          (landmarks[MP_POSE.LEFT_EAR].x * lVis +
+            landmarks[MP_POSE.RIGHT_EAR].x * rVis) /
+          (lVis + rVis),
+        y:
+          (landmarks[MP_POSE.LEFT_EAR].y * lVis +
+            landmarks[MP_POSE.RIGHT_EAR].y * rVis) /
+          (lVis + rVis),
+      };
+
+      const midShoulderLive = {
+        x: (landmarks[11].x + landmarks[12].x) / 2,
+        y: (landmarks[11].y + landmarks[12].y) / 2,
+      };
+      const midHipLive = {
+        x: (landmarks[23].x + landmarks[24].x) / 2,
+        y: (landmarks[23].y + landmarks[24].y) / 2,
+      };
+
+      ctx.beginPath();
+      ctx.moveTo(midEarLive.x * width, midEarLive.y * height);
+      ctx.lineTo(midShoulderLive.x * width, midShoulderLive.y * height);
+      ctx.lineTo(midHipLive.x * width, midHipLive.y * height);
+      ctx.strokeStyle = colors.neck;
+      ctx.lineWidth = 6;
+      ctx.stroke();
+
+      drawLineOnLive(11, 12, colors.shoulders, 4);
+
+      drawLineOnLive(11, 23, colors.torso);
+      drawLineOnLive(12, 24, colors.torso);
+      drawLineOnLive(23, 24, colors.torso);
+
+      drawLineOnLive(12, 14, colors.rightArm);
+      drawLineOnLive(14, 16, colors.rightArm);
+      drawLineOnLive(16, 20, colors.rightWrist, 6);
+      drawLineOnLive(16, 18, colors.rightWrist, 4);
+      drawLineOnLive(16, 22, colors.rightWrist, 4);
+
+      drawLineOnLive(11, 13, colors.leftArm);
+      drawLineOnLive(13, 15, colors.leftArm);
+      drawLineOnLive(15, 19, colors.leftWrist, 6);
+      drawLineOnLive(15, 17, colors.leftWrist, 4);
+      drawLineOnLive(15, 21, colors.leftWrist, 4);
+
+      drawLineOnLive(24, 26, colors.rightLeg, 4, 0.65);
+      drawLineOnLive(26, 28, colors.rightLeg, 4, 0.65);
+      drawLineOnLive(23, 25, colors.leftLeg, 4, 0.65);
+      drawLineOnLive(25, 27, colors.leftLeg, 4, 0.65);
+    }
+  }, [
+    debugInfo?.landmarks,
+    isTracking,
+    level,
+    segmentColors,
+    debugInfo?.poseType,
+  ]);
+
   return (
     <div className="fixed inset-0 bg-black flex flex-col font-sans overflow-hidden">
+      {toast && (
+        <div
+          className={`absolute top-24 left-1/2 -translate-x-1/2 px-6 py-3 text-white text-sm font-bold rounded-full shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-4 z-50 whitespace-nowrap 
+          ${toast.type === "success" ? "bg-green-500/90" : toast.type === "warning" ? "bg-orange-500/90" : "bg-indigo-500/90"}`}
+        >
+          {toast.msg}
+        </div>
+      )}
+
       <div className="relative h-full w-full">
         <div className="absolute inset-0 w-full h-full overflow-hidden transition-transform duration-300">
           <Webcam
@@ -498,17 +463,13 @@ export default function ErgonomicsPro() {
               </span>
             </div>
 
-            {/* ✅ แผงปุ่มมุมขวาบน */}
             <div className="flex items-center gap-2">
-              {/* ปุ่มสลับโชว์/ซ่อน Live Analytics */}
               <button
                 onClick={() => setShowAnalytics(!showAnalytics)}
                 className={`p-2 rounded-full backdrop-blur-sm transition-colors ${showAnalytics ? "bg-indigo-500 text-white" : "bg-white/10 text-white hover:bg-white/20"}`}
-                title="Toggle Analytics"
               >
                 <BarChart2 className="h-5 w-5" />
               </button>
-
               <button
                 onClick={() => setShowSettings(!showSettings)}
                 className="p-2 rounded-full bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 transition-colors"
@@ -542,9 +503,8 @@ export default function ErgonomicsPro() {
           )}
         </div>
 
-        {/* ✅ จอ Debug Stats ซ่อน/โชว์ ได้ตาม State showAnalytics */}
         {isTracking && showAnalytics && (
-          <div className="absolute top-28 left-6 flex flex-col gap-1.5 rounded-xl bg-black/60 border border-white/10 px-4 py-3 backdrop-blur-md z-20 shadow-xl pointer-events-none w-52 animate-in fade-in slide-in-from-left-4">
+          <div className="absolute top-28 left-6 flex flex-col gap-1.5 rounded-xl bg-black/60 border border-white/10 px-4 py-3 backdrop-blur-md z-20 shadow-xl pointer-events-none w-56 animate-in fade-in slide-in-from-left-4">
             <span className="text-[10px] text-gray-400 font-mono uppercase tracking-widest border-b border-gray-600 pb-1 mb-1">
               Live Analytics
             </span>
@@ -553,7 +513,7 @@ export default function ErgonomicsPro() {
                 Posture:
               </span>
               <span className="text-sm font-bold text-indigo-300 truncate">
-                {debugInfo.poseType}
+                {debugInfo?.poseType}
               </span>
             </div>
             <div className="flex justify-between gap-2 items-center">
@@ -561,19 +521,19 @@ export default function ErgonomicsPro() {
                 Neck Lean:
               </span>
               <span
-                className={`text-sm font-bold font-mono ${debugInfo.neckLean > CONFIG.MAX_NECK_LEAN_ANGLE ? "text-red-400" : "text-green-400"}`}
+                className={`text-sm font-bold font-mono ${segmentColors?.neck === "#ef4444" ? "text-red-400" : "text-green-400"}`}
               >
-                {debugInfo.neckLean}°
+                {debugInfo?.neckLean}°
               </span>
             </div>
             <div className="flex justify-between gap-2 items-center">
               <span className="text-xs text-white/80 font-medium whitespace-nowrap">
-                Head Drop:
+                Shoulder Hunch:
               </span>
               <span
-                className={`text-sm font-bold font-mono ${debugInfo.headDrop < CONFIG.MIN_HEAD_DROP_RATIO ? "text-red-400" : "text-green-400"}`}
+                className={`text-sm font-bold font-mono ${segmentColors?.shoulders === "#ef4444" ? "text-red-400" : "text-green-400"}`}
               >
-                {debugInfo.headDrop}
+                {debugInfo?.shoulderHunch}%
               </span>
             </div>
             <div className="flex justify-between gap-2 items-center">
@@ -581,33 +541,35 @@ export default function ErgonomicsPro() {
                 Wrist (L/R):
               </span>
               <span
-                className={`text-sm font-bold font-mono ${debugInfo.wristAngle < CONFIG.MIN_WRIST_ANGLE ? "text-red-400" : "text-green-400"}`}
+                className={`text-sm font-bold font-mono ${segmentColors?.leftWrist === "#ef4444" || segmentColors?.rightWrist === "#ef4444" ? "text-red-400" : "text-green-400"}`}
               >
-                {debugInfo.wristAngle}°
+                {debugInfo?.wristAngle}°
               </span>
             </div>
           </div>
         )}
 
         {isTracking && (
-          <div className="absolute top-28 left-1/2 -translate-x-1/2 flex items-center gap-4 rounded-full bg-black/60 border border-white/10 px-5 py-2.5 backdrop-blur-md z-20 shadow-2xl animate-in fade-in zoom-in duration-300">
-            <div className="flex items-center gap-2 border-r border-white/20 pr-4">
-              <span className="relative flex h-2.5 w-2.5">
-                <span
-                  className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${statusConfig[level].dot}`}
-                />
-                <span
-                  className={`relative inline-flex h-2.5 w-2.5 rounded-full ${statusConfig[level].dot}`}
-                />
-              </span>
-              <span className="text-sm font-semibold text-white/90">
-                {formatTime(duration)}
-              </span>
-            </div>
-            <div
-              className={`text-sm font-bold tracking-wide ${statusConfig[level].color}`}
-            >
-              {statusConfig[level].text}
+          <div className="absolute top-28 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-20">
+            <div className="flex items-center gap-4 rounded-full bg-black/60 border border-white/10 px-5 py-2.5 backdrop-blur-md shadow-2xl animate-in fade-in zoom-in duration-300">
+              <div className="flex items-center gap-2 border-r border-white/20 pr-4">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span
+                    className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${statusConfig[level].dot}`}
+                  />
+                  <span
+                    className={`relative inline-flex h-2.5 w-2.5 rounded-full ${statusConfig[level].dot}`}
+                  />
+                </span>
+                <span className="text-sm font-semibold text-white/90">
+                  {formatTime(duration)}
+                </span>
+              </div>
+              <div
+                className={`text-sm font-bold tracking-wide ${statusConfig[level].color}`}
+              >
+                {statusConfig[level].text}
+              </div>
             </div>
           </div>
         )}
@@ -620,11 +582,10 @@ export default function ErgonomicsPro() {
               );
               setSelectedDevice("");
             }}
-            className="flex h-12 w-12 items-center justify-center rounded-full bg-black/50 border border-white/10 text-white backdrop-blur-md transition-all active:scale-95 hover:bg-black/70"
+            className="flex h-12 w-12 items-center justify-center rounded-full bg-black/50 border border-white/10 text-white backdrop-blur-md hover:bg-black/70"
           >
             <FlipHorizontal className="h-5 w-5" />
           </button>
-
           <div className="flex flex-col gap-1 items-center bg-black/50 border border-white/10 rounded-full py-2 backdrop-blur-md">
             <button
               onClick={() => handleZoom("in")}
@@ -647,16 +608,15 @@ export default function ErgonomicsPro() {
         </div>
 
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent pt-32 pb-12 px-8 z-20">
-          <div className="flex items-center justify-center gap-12">
+          <div className="flex items-center justify-center gap-8">
             <button
-              onClick={() => setIsTracking(!isTracking)}
-              className={`flex h-16 w-16 items-center justify-center rounded-full border-2 transition-all active:scale-90 shadow-lg ${isTracking ? "border-red-500 bg-red-500/20 text-red-500" : "border-white/50 bg-white/10 text-white hover:bg-white/20"}`}
+              onClick={handleCalibrate}
+              className={`flex flex-col items-center justify-center h-16 w-16 rounded-full border-2 transition-all active:scale-90 shadow-lg backdrop-blur-md ${isCalibrated ? "border-green-500/50 bg-green-500/20 text-green-400" : "border-white/50 bg-white/10 text-white hover:bg-white/20"}`}
             >
-              {isTracking ? (
-                <Square className="h-6 w-6 fill-current" />
-              ) : (
-                <Play className="h-7 w-7 ml-1 fill-current" />
-              )}
+              <Scan className="h-6 w-6 mb-0.5" />
+              <span className="text-[10px] font-bold leading-none">
+                {isCalibrated ? "Ready" : "Set Base"}
+              </span>
             </button>
 
             <button
@@ -668,6 +628,7 @@ export default function ErgonomicsPro() {
                 <Camera className="h-8 w-8 text-gray-900" />
               </span>
             </button>
+
             <div className="h-16 w-16" />
           </div>
         </div>
