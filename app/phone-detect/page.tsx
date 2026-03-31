@@ -53,7 +53,9 @@ export default function PhoneDetector() {
 
       // โหลด COCO-SSD
       await tf.ready();
-      const loadedCoco = await cocoSsd.load({ base: "lite_mobilenet_v2" });
+      //   const loadedCoco = await cocoSsd.load({ base: "lite_mobilenet_v2" });
+      // อัปเกรดเป็นตัวเต็ม จะจับมุมตะแคงและมุมเอียงได้ดีขึ้นอีกสเต็ป
+      const loadedCoco = await cocoSsd.load({ base: "mobilenet_v2" });
       setCocoModel(loadedCoco);
 
       // โหลด MediaPipe Pose แบบ Singleton
@@ -150,10 +152,7 @@ export default function PhoneDetector() {
             // 🎯 Lvl 1: ตรวจจับวัตถุด้วย COCO-SSD (ตาเหยี่ยว)
             // ----------------------------------------------------
             predictions.forEach((prediction) => {
-              if (
-                prediction.class === "cell phone" &&
-                prediction.score > 0.45
-              ) {
+              if (prediction.class === "cell phone" && prediction.score > 0.4) {
                 phoneFound = true;
                 reason = "ตรวจพบวัตถุโทรศัพท์มือถือ";
 
