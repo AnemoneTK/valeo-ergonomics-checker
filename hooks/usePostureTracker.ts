@@ -60,6 +60,10 @@ const DEFAULT_SEGMENT_COLORS: SegmentColors = {
   rightWrist: "#22c55e",
 };
 
+// 🌟 ไม้ตาย Singleton: แอบเก็บ AI ไว้ข้างนอกฟังก์ชัน เพื่อไม่ให้โดนทำลายตอนเปลี่ยนหน้า!
+let globalPoseInstance: any = null;
+let isPoseInitializing = false;
+
 export function usePostureTracker() {
   const webcamRef = useRef<Webcam>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -85,12 +89,15 @@ export function usePostureTracker() {
     shoulderHunch: 100,
     landmarks: [] as Landmark[],
   });
+
   const [autoCalibrateEvent, setAutoCalibrateEvent] = useState(0);
   const [calibrateRejectEvent, setCalibrateRejectEvent] = useState(0);
 
   const isTrackingRef = useRef(isTracking);
   const badPostureStartTimeRef = useRef<number | null>(null);
   const postureChangeStartTimeRef = useRef<number | null>(null);
+
+  const onResultsRef = useRef<((results: Results) => void) | null>(null);
 
   useEffect(() => {
     isTrackingRef.current = isTracking;
@@ -136,7 +143,6 @@ export function usePostureTracker() {
         const rightElbow = landmarks[MP_POSE.RIGHT_ELBOW];
         const rightWrist = landmarks[MP_POSE.RIGHT_WRIST];
 
-        // 🌟 ฟังก์ชันหาค่ากลางแบบฉลาด (ยิ่งชัด ยิ่งดึงมาหาตัว)
         const getWeightedMidpoint = (p1: Landmark, p2: Landmark) => {
           const v1 = p1.visibility || 0.01;
           const v2 = p2.visibility || 0.01;
@@ -146,7 +152,6 @@ export function usePostureTracker() {
           };
         };
 
-        // 🌟 ใช้สมการใหม่ทั้งหมด! ทำให้เส้นแกนตัวเกาะสมจริง 100% แม้จะหันตัว
         const midEar = getWeightedMidpoint(leftEar, rightEar);
         const midShoulder = getWeightedMidpoint(leftShoulder, rightShoulder);
 
@@ -328,36 +333,65 @@ export function usePostureTracker() {
   );
 
   useEffect(() => {
-    if (typeof window === "undefined" || poseRef.current) return;
-    let isCancelled = false;
-
-    const mpPose = require("@mediapipe/pose");
-    const PoseConstructor = mpPose.Pose || (window as any).Pose;
-    if (!PoseConstructor) return;
-
-    const pose = new PoseConstructor({
-      locateFile: (f: string) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`,
-    });
-    pose.setOptions({
-      modelComplexity: 2,
-      smoothLandmarks: true,
-      minDetectionConfidence: 0.6,
-      minTrackingConfidence: 0.6,
-    });
-    pose.onResults(onResults);
-    pose.initialize().then(() => {
-      if (!isCancelled) poseRef.current = pose;
-      else pose.close();
-    });
-    return () => {
-      isCancelled = true;
-      if (poseRef.current) {
-        poseRef.current.close();
-        poseRef.current = null;
-      }
-    };
+    onResultsRef.current = onResults;
   }, [onResults]);
+
+  // 🌟 บล็อกแก้ปัญหาระดับเทพ: ระบบจัดการ AI แบบ Singleton
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const setupPose = async () => {
+      // 1. ถ้ามี AI อยู่ในแรมแล้ว ดึงมาใช้เลย ไม่ต้องโหลดใหม่!
+      if (globalPoseInstance) {
+        poseRef.current = globalPoseInstance;
+        // แค่ผูกหูฟัง (Callback) ใหม่ ให้ยิงเข้าหน้าจอที่เปิดอยู่
+        globalPoseInstance.onResults((results: Results) => {
+          if (onResultsRef.current) onResultsRef.current(results);
+        });
+        return;
+      }
+
+      // 2. ถ้า Next.js สั่งโหลดซ้อนกัน (กำลังโหลดอยู่) ให้มันรอ 100ms
+      if (isPoseInitializing) {
+        setTimeout(setupPose, 100);
+        return;
+      }
+
+      isPoseInitializing = true;
+      const mpPose = require("@mediapipe/pose");
+      const PoseConstructor = mpPose.Pose || (window as any).Pose;
+      if (!PoseConstructor) return;
+
+      const pose = new PoseConstructor({
+        locateFile: (f: string) =>
+          `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`,
+      });
+      pose.setOptions({
+        modelComplexity: 2,
+        smoothLandmarks: true,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6,
+      });
+
+      pose.onResults((results: Results) => {
+        if (onResultsRef.current) onResultsRef.current(results);
+      });
+
+      await pose.initialize();
+
+      // 3. ฝัง AI ไว้เป็น Global ไว้ใช้รอบหน้า
+      globalPoseInstance = pose;
+      poseRef.current = pose;
+      isPoseInitializing = false;
+    };
+
+    setupPose();
+
+    // 🌟 ไม้ตาย: ไม่ต้องสั่งทำลาย (close) ทิ้งอีกต่อไป ปล่อยมันทำงานไปยาวๆ ตลอดการเข้าเว็บเลย
+    return () => {
+      // เอาออกแค่เพื่อความปลอดภัย
+    };
+  }, []);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
